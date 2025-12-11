@@ -31,18 +31,32 @@ Future<void> main() async {
     // Continuar sin .env, usar valores por defecto
   }
 
-  // 🔥 Inicializar Firebase
+  // 🔥 Inicializar Firebase (solo si no está inicializado)
   try {
-    await Firebase.initializeApp(
-      options: DefaultFirebaseOptions.currentPlatform,
-    );
-    debugPrint('✅ Firebase inicializado');
+    // Verificar si Firebase ya está inicializado
+    if (Firebase.apps.isEmpty) {
+      await Firebase.initializeApp(
+        options: DefaultFirebaseOptions.currentPlatform,
+      );
+      debugPrint('✅ Firebase inicializado');
+    } else {
+      debugPrint('✅ Firebase ya estaba inicializado');
+    }
+  } catch (e) {
+    // Si falla porque ya existe, continuar igualmente
+    if (e.toString().contains('duplicate-app')) {
+      debugPrint('⚠️ Firebase ya estaba inicializado (hot restart)');
+    } else {
+      debugPrint('❌ Error inicializando Firebase: $e');
+    }
+  }
 
-    // 🔔 Inicializar servicio de notificaciones
+  // 🔔 Inicializar servicio de notificaciones (separado para evitar conflictos)
+  try {
     await FirebaseService().initialize();
     FirebaseService().onTokenRefresh(); // Escuchar cambios de token
   } catch (e) {
-    debugPrint('❌ Error inicializando Firebase: $e');
+    debugPrint('❌ Error inicializando FirebaseService: $e');
   }
 
   runApp(const MyApp());

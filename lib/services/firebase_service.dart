@@ -10,7 +10,10 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 // 🔥 Función para manejar mensajes en segundo plano (debe estar fuera de la clase)
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
-  await Firebase.initializeApp();
+  // Solo inicializar si no está ya inicializado
+  if (Firebase.apps.isEmpty) {
+    await Firebase.initializeApp();
+  }
   debugPrint('📩 Mensaje en segundo plano: ${message.messageId}');
   debugPrint('Título: ${message.notification?.title}');
   debugPrint('Cuerpo: ${message.notification?.body}');
@@ -31,9 +34,20 @@ class FirebaseService {
   
   // Callback para navegación
   Function(String route, {Map<String, dynamic>? arguments})? onNavigate;
+  
+  // Flag para evitar múltiples inicializaciones
+  bool _isInitialized = false;
 
   // 🔧 Inicializar Firebase y notificaciones
   Future<void> initialize() async {
+    // Si ya está inicializado, no hacer nada
+    if (_isInitialized) {
+      debugPrint('⚠️ FirebaseService ya está inicializado, omitiendo...');
+      return;
+    }
+    
+    debugPrint('🚀 Iniciando FirebaseService...');
+    
     try {
       // 1️⃣ Solicitar permisos de notificación
       NotificationSettings settings = await _messaging.requestPermission(
@@ -56,28 +70,49 @@ class FirebaseService {
       // 2️⃣ Configurar notificaciones locales
       await _initializeLocalNotifications();
 
-      // 3️⃣ Obtener token FCM con reintentos
-      int maxRetries = 3;
+      // 3️⃣ Obtener token FCM con reintentos (especialmente para Xiaomi)
+      int maxRetries = 5;
       for (int i = 0; i < maxRetries; i++) {
         try {
+          // Esperar más tiempo en dispositivos Xiaomi
+          if (i > 0) {
+            await Future.delayed(Duration(seconds: 3 + i));
+          }
+          
+          // Intentar eliminar token anterior si existe
+          if (i > 0) {
+            try {
+              await _messaging.deleteToken();
+              debugPrint('🗑️ Token anterior eliminado, solicitando nuevo...');
+              await Future.delayed(Duration(seconds: 2));
+            } catch (e) {
+              debugPrint('⚠️ No se pudo eliminar token anterior: $e');
+            }
+          }
+          
           _fcmToken = await _messaging.getToken();
-          if (_fcmToken != null) {
+          if (_fcmToken != null && _fcmToken!.isNotEmpty) {
             debugPrint('🔑 FCM Token obtenido: $_fcmToken');
+            debugPrint('✅ Token length: ${_fcmToken!.length}');
             break;
           } else {
-            debugPrint('⚠️ Token FCM es null, reintentando... (${i + 1}/$maxRetries)');
-            await Future.delayed(Duration(seconds: 2));
+            debugPrint('⚠️ Token FCM es null o vacío, reintentando... (${i + 1}/$maxRetries)');
           }
         } catch (e) {
           debugPrint('❌ Error obteniendo token (intento ${i + 1}/$maxRetries): $e');
           if (i == maxRetries - 1) {
             debugPrint('⚠️ No se pudo obtener token FCM después de $maxRetries intentos');
             debugPrint('   Esto puede deberse a:');
-            debugPrint('   - Falta de Google Play Services');
+            debugPrint('   - Restricciones de Xiaomi/MIUI');
+            debugPrint('   - Google Play Services deshabilitado');
             debugPrint('   - Problemas de conectividad');
-            debugPrint('   - Restricciones del dispositivo');
-          } else {
-            await Future.delayed(Duration(seconds: 2));
+            debugPrint('   - Restricciones de batería/autoarranque');
+            debugPrint('');
+            debugPrint('   🔧 SOLUCIÓN para Xiaomi:');
+            debugPrint('   1. Activar Autoarranque para esta app');
+            debugPrint('   2. Quitar restricciones de batería');
+            debugPrint('   3. Bloquear app en recientes (candado)');
+            debugPrint('   4. Activar permisos para Google Play Services');
           }
         }
       }
@@ -91,6 +126,10 @@ class FirebaseService {
 
       // 6️⃣ Enviar token al backend (si el usuario está logueado)
       await _sendTokenToBackend();
+      
+      // Marcar como inicializado
+      _isInitialized = true;
+      debugPrint('✅ FirebaseService inicializado completamente');
     } catch (e) {
       debugPrint('❌ Error inicializando Firebase: $e');
     }
